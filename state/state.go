@@ -6,20 +6,24 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/0xPolygonHermez/zkevm-node/encoding"
+	"github.com/0xPolygonHermez/zkevm-node/hex"
 	"github.com/0xPolygonHermez/zkevm-node/log"
 	"github.com/0xPolygonHermez/zkevm-node/merkletree"
 	"github.com/0xPolygonHermez/zkevm-node/state/runtime"
 	"github.com/0xPolygonHermez/zkevm-node/state/runtime/executor/pb"
 	"github.com/0xPolygonHermez/zkevm-node/state/runtime/fakevm"
 	"github.com/0xPolygonHermez/zkevm-node/state/runtime/instrumentation"
+	"github.com/0xPolygonHermez/zkevm-node/state/runtime/instrumentation/js"
 	"github.com/0xPolygonHermez/zkevm-node/state/runtime/instrumentation/tracers"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
 	"github.com/holiman/uint256"
 	"github.com/jackc/pgx/v4"
@@ -431,8 +435,171 @@ func (s *State) GetLastBatch(ctx context.Context, dbTx pgx.Tx) (*Batch, error) {
 
 // DebugTransaction re-executes a tx to generate its trace
 func (s *State) DebugTransaction(ctx context.Context, transactionHash common.Hash, tracer string) (*runtime.ExecutionResult, error) {
-	// TODO: Implement
-	return new(runtime.ExecutionResult), nil
+	dbTx, err := s.BeginStateTransaction(ctx)
+	if err != nil {
+		log.Errorf("debug transaction: failed to begin db transaction, err: %v", err)
+		rbErr := s.RollbackStateTransaction(ctx, dbTx)
+		if rbErr != nil {
+			log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+		}
+		return nil, err
+	}
+
+	tx, err := s.GetTransactionByHash(ctx, transactionHash, dbTx)
+	if err != nil {
+		log.Errorf("debug transaction: failed to get transaction by hash, err: %v", err)
+		rbErr := s.RollbackStateTransaction(ctx, dbTx)
+		if rbErr != nil {
+			log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+		}
+		return nil, err
+	}
+
+	receipt, err := s.GetTransactionReceipt(ctx, transactionHash, dbTx)
+	if err != nil {
+		log.Errorf("debug transaction: failed to get receipt by tx hash, err: %v", err)
+		rbErr := s.RollbackStateTransaction(ctx, dbTx)
+		if rbErr != nil {
+			log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+		}
+		return nil, err
+	}
+
+	block, err := s.GetL2BlockByHash(ctx, receipt.BlockHash, dbTx)
+	if err != nil {
+		log.Errorf("debug transaction: failed to get batch by hash, err: %v", err)
+		rbErr := s.RollbackStateTransaction(ctx, dbTx)
+		if rbErr != nil {
+			log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+		}
+		return nil, err
+	}
+
+	var stateRoot []byte
+
+	if receipt.TransactionIndex > 0 {
+		previousTX, err := s.GetTransactionByL2BlockHashAndIndex(ctx, receipt.BlockHash, uint64(receipt.TransactionIndex-1), dbTx)
+		if err != nil {
+			log.Errorf("debug transaction: failed to get previous tx, err: %v", err)
+			rbErr := s.RollbackStateTransaction(ctx, dbTx)
+			if rbErr != nil {
+				log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+			}
+			return nil, err
+		}
+
+		previousReceipt, err := s.GetTransactionReceipt(ctx, previousTX.Hash(), dbTx)
+		if err != nil {
+			log.Errorf("debug transaction: failed to get receipt by previous tx hash, err: %v", err)
+			rbErr := s.RollbackStateTransaction(ctx, dbTx)
+			if rbErr != nil {
+				log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+			}
+			return nil, err
+		}
+
+		stateRoot = previousReceipt.PostState
+	} else {
+		previousBlock, err := s.GetL2BlockByHash(ctx, block.Header().ParentHash, dbTx)
+		if err == ErrNotFound {
+			previousBlock, err = s.GetLastL2Block(ctx, dbTx)
+			if err != nil {
+				log.Errorf("debug transaction: failed to get last batch, err: %v", err)
+				rbErr := s.RollbackStateTransaction(ctx, dbTx)
+				if rbErr != nil {
+					log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+				}
+				return nil, err
+			}
+		} else if err != nil {
+			log.Errorf("debug transaction: failed to get batch by hash, err: %v", err)
+			rbErr := s.RollbackStateTransaction(ctx, dbTx)
+			if rbErr != nil {
+				log.Errorf("debug transaction: failed to rollback db transaction on error, err: %v, rollback err: %v", err, rbErr)
+			}
+			return nil, err
+		}
+
+		stateRoot = previousBlock.Header().Root.Bytes()
+	}
+
+	log.Debugf("debug root: %v", common.Bytes2Hex(stateRoot))
+
+	batchL2Data, err := EncodeTransactions([]types.Transaction{*tx})
+	if err != nil {
+		return nil, err
+	}
+
+	// Create a batch to be sent to the executor
+	processBatchRequest := &pb.ProcessBatchRequest{
+		BatchNum:             lastBatch.BatchNumber + 1,
+		Coinbase:             block.Header().Coinbase.String(),
+		BatchL2Data:          batchL2Data,
+		OldStateRoot:         stateRoot,
+		UpdateMerkleTree:     0,
+		GenerateExecuteTrace: 1,
+		GenerateCallTrace:    0,
+	}
+
+	if tracer == "" {
+		return result, nil
+	}
+
+	// Parse the executor-like trace using the FakeEVM
+	jsTracer, err := js.NewJsTracer(tracer, new(tracers.Context))
+	if err != nil {
+		log.Errorf("debug transaction: failed to create jsTracer, err: %v", err)
+		return nil, err
+	}
+
+	context := instrumentation.Context{}
+
+	// Fill trace context
+	if tx.To() == nil {
+		context.Type = "CREATE"
+		context.To = result.CreateAddress.Hex()
+	} else {
+		context.Type = "CALL"
+		context.To = tx.To().Hex()
+	}
+	context.From = receipt.From.Hex()
+	context.Input = "0x" + hex.EncodeToString(tx.Data())
+	context.Gas = strconv.FormatUint(tx.Gas(), encoding.Base10)
+	context.Value = tx.Value().String()
+	context.Output = "0x" + hex.EncodeToString(result.ReturnValue)
+	context.GasPrice = tx.GasPrice().String()
+	context.OldStateRoot = "0x" + hex.EncodeToString(stateRoot)
+	context.Time = uint64(endTime.Sub(startTime))
+	context.GasUsed = strconv.FormatUint(result.GasUsed, encoding.Base10)
+
+	result.ExecutorTrace.Context = context
+
+	gasPrice, ok := new(big.Int).SetString(context.GasPrice, encoding.Base10)
+	if !ok {
+		log.Errorf("debug transaction: failed to parse gasPrice")
+		return result, nil
+	}
+
+	env := fakevm.NewFakeEVM(vm.BlockContext{BlockNumber: big.NewInt(1)}, vm.TxContext{GasPrice: gasPrice}, params.TestChainConfig, fakevm.Config{Debug: true, Tracer: jsTracer})
+	fakeDB := &FakeDB{State: s}
+	env.SetStateDB(fakeDB)
+
+	traceResult, err := s.ParseTheTraceUsingTheTracer(env, result.ExecutorTrace, jsTracer)
+	if err != nil {
+		log.Errorf("debug transaction: failed parse the trace using the tracer: %v", err)
+		return result, nil
+	}
+
+	result.ExecutorTraceResult = traceResult
+
+	// Rollback
+	err = s.RollbackStateTransaction(ctx, dbTx)
+	if err != nil {
+		log.Errorf("debug transaction: failed to rollback transaction, err: %v", err)
+		return nil, err
+	}
+
+	return result, nil
 }
 
 // ParseTheTraceUsingTheTracer parses the given trace with the given tracer.
