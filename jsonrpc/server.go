@@ -12,6 +12,9 @@ import (
 
 	"github.com/0xPolygonHermez/zkevm-node/log"
 	"github.com/didip/tollbooth/v6"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 const (
@@ -35,6 +38,26 @@ type Server struct {
 	handler *Handler
 	srv     *http.Server
 }
+
+var (
+	requests = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "jsonrpc_requests",
+			Help: "JSONRPC number of requests received",
+		},
+		[]string{"request_label"},
+	)
+	start           = 0.1
+	width           = 0.1
+	count           = 10
+	requestDuration = promauto.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "jsonrpc_request_duration",
+			Help:    "JSONRPC Histogram for the runtime of requests",
+			Buckets: prometheus.LinearBuckets(start, width, count),
+		},
+	)
+)
 
 // NewServer returns the JsonRPC server
 func NewServer(cfg Config, p jsonRPCTxPool, s stateInterface,
@@ -96,6 +119,7 @@ func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
 	lmt := tollbooth.NewLimiter(s.config.MaxRequestsPerIPAndSecond, nil)
+	mux.Handle("/metrics", promhttp.Handler())
 	mux.Handle("/", tollbooth.LimitFuncHandler(lmt, s.handle))
 
 	s.srv = &http.Server{
@@ -137,11 +161,19 @@ func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
 	w.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS")
 	w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization")
 
+	requestLabel := "undefined"
+	defer func() {
+		requests.WithLabelValues("Total").Inc()
+		requests.WithLabelValues(requestLabel).Inc()
+	}()
+
 	if (*req).Method == "OPTIONS" {
+		requestLabel = "foo"
 		return
 	}
 
 	if req.Method == "GET" {
+		requestLabel = "foo"
 		_, err := w.Write([]byte("zkEVM JSON RPC Server"))
 		if err != nil {
 			log.Error(err)
@@ -150,6 +182,7 @@ func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if req.Method != "POST" {
+		requestLabel = "invalid"
 		err := errors.New("method " + req.Method + " not allowed")
 		handleError(w, err)
 		return
@@ -157,21 +190,27 @@ func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
 
 	data, err := ioutil.ReadAll(req.Body)
 	if err != nil {
+		requestLabel = "invalid"
 		handleError(w, err)
 		return
 	}
 
 	single, err := s.isSingleRequest(data)
 	if err != nil {
+		requestLabel = "invalid"
 		handleError(w, err)
 		return
 	}
 
+	timer := prometheus.NewTimer(requestDuration)
 	if single {
+		requestLabel = "single"
 		s.handleSingleRequest(w, data)
 	} else {
+		requestLabel = "batch"
 		s.handleBatchRequest(w, data)
 	}
+	timer.ObserveDuration()
 }
 
 func (s *Server) isSingleRequest(data []byte) (bool, rpcError) {
