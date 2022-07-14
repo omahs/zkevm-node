@@ -652,7 +652,10 @@ func (s *State) DebugTransaction(ctx context.Context, transactionHash common.Has
 		Coinbase:             block.Header().Coinbase.String(),
 		BatchL2Data:          batchL2Data,
 		OldStateRoot:         stateRoot,
+		GlobalExitRoot:       "",
+		OldLocalExitRoot:     "",
 		UpdateMerkleTree:     0,
+		EthTimestamp:         "",
 		GenerateExecuteTrace: 1,
 		GenerateCallTrace:    0,
 	}
