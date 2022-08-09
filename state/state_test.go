@@ -1,6 +1,7 @@
 package state_test
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math/big"
@@ -1222,10 +1223,6 @@ func TestExecutorTxHash(t *testing.T) {
 	// Process batch
 	processBatchResponse, err := executorClient.ProcessBatch(ctx, processBatchRequest)
 	require.NoError(t, err)
-
-	log.Debugf("TX Hash=%v", tx.Hash().String())
-	log.Debugf("Response TX Hash=%v", common.BytesToHash(processBatchResponse.Responses[0].TxHash).String())
-
 	require.Equal(t, tx.Hash(), common.BytesToHash(processBatchResponse.Responses[0].TxHash))
 }
 
@@ -1512,5 +1509,70 @@ func TestGenesisFromMock(t *testing.T) {
 
 			require.Equal(t, expectedValue, actualValue)
 		}
+	}
+}
+
+func TestExecutorRLP(t *testing.T) {
+	var chainIDSequencer = new(big.Int).SetInt64(1000)
+	var sequencerPvtKey = "0x28b2b0318721be8c8339199172cd7cc8f5e273800a35616ec893083a4b32c02e"
+	scCounterByteCode, err := testutils.ReadBytecode("Counter/Counter.bin")
+	require.NoError(t, err)
+
+	privateKey, err := crypto.HexToECDSA(strings.TrimPrefix(sequencerPvtKey, "0x"))
+	require.NoError(t, err)
+	auth, err := bind.NewKeyedTransactorWithChainID(privateKey, chainIDSequencer)
+	require.NoError(t, err)
+
+	// Using legacy txs
+	signedTx1, err := auth.Signer(auth.From, types.NewTx(&types.LegacyTx{
+		Nonce:    0,
+		To:       &state.ZeroAddress,
+		Value:    new(big.Int),
+		Gas:      4000000,
+		GasPrice: new(big.Int).SetUint64(0),
+		Data:     common.Hex2Bytes(scCounterByteCode),
+	}))
+	require.NoError(t, err)
+	signedTx2, err := auth.Signer(auth.From, types.NewTx(&types.LegacyTx{
+		Nonce:    1,
+		To:       &state.ZeroAddress,
+		Value:    new(big.Int),
+		Gas:      21000,
+		GasPrice: new(big.Int).SetUint64(0),
+	}))
+	require.NoError(t, err)
+	// Using EIP155
+	tx := types.NewTransaction(0, state.ZeroAddress, new(big.Int), 4000000, new(big.Int).SetUint64(0), common.Hex2Bytes(scCounterByteCode))
+	signedTx3, err := types.SignTx(tx, types.NewEIP155Signer(chainIDSequencer), privateKey)
+	require.NoError(t, err)
+	tx = types.NewTransaction(1, state.ZeroAddress, new(big.Int), 21000, new(big.Int).SetUint64(0), nil)
+	signedTx4, err := types.SignTx(tx, types.NewEIP155Signer(chainIDSequencer), privateKey)
+	require.NoError(t, err)
+
+	signedTxs := []types.Transaction{*signedTx1, *signedTx2, *signedTx3, *signedTx4}
+	batchL2Data, err := state.EncodeTransactions(signedTxs)
+	require.NoError(t, err)
+
+	// Create Batch
+	processBatchRequest := &executorclientpb.ProcessBatchRequest{
+		BatchNum:         1,
+		BatchL2Data:      batchL2Data,
+		GlobalExitRoot:   state.ZeroHash[:],
+		OldLocalExitRoot: state.ZeroHash[:],
+		EthTimestamp:     uint64(0),
+		UpdateMerkleTree: 1,
+	}
+
+	// Process batch
+	processBatchResponse, err := executorClient.ProcessBatch(ctx, processBatchRequest)
+	require.NoError(t, err)
+	log.Infof("Batch data: %s", hex.EncodeToHex(batchL2Data))
+	for i := 0; i < len(signedTxs); i++ {
+		buf := new(bytes.Buffer)
+		err = signedTxs[i].EncodeRLP(buf)
+		require.NoError(t, err)
+		// log.Infof("Expected RLP for tx %d: %s", i, hex.EncodeToHex(buf.Bytes()))
+		// log.Infof("Actual RLP for tx %d: %s", i, hex.EncodeToHex(processBatchResponse.Responses[i].RlpTx))
+		assert.Equal(t, buf.Bytes(), processBatchResponse.Responses[i].RlpTx)
 	}
 }
