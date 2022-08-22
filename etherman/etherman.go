@@ -232,6 +232,11 @@ func (etherMan *Client) sequenceBatches(opts *bind.TransactOpts, sequences []eth
 
 		batches = append(batches, batch)
 	}
+	n, err := json.Marshal(batches)
+	if err != nil {
+		log.Error("error marshalling batches: ", err)
+	}
+	log.Warn("Lenght of bytes batches: ", len(n))
 	return etherMan.PoE.SequenceBatches(opts, batches)
 }
 
