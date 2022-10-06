@@ -56,7 +56,8 @@ make restart
 
 ## Advanced setup
 
-In order to have funds in L2, for development:
+
+To grant Matic access to the sequencer:
 
 ```bash
 make run-approve-matic
@@ -117,7 +118,7 @@ Configuring the node for running locally is pretty painless as the configuration
 
 Path for config used when running as Node: [`./config/config.local.toml`](../config/config.local.toml)
 
-Path for config used when running as test: [`./test/config/config.test.toml`](../test/config/config.test.toml)
+Path for config used when running as test (`make test`, `make test-full-non-e2e`): [`./test/config/config.test.toml`](../test/config/config.test.toml)
 
 Additionally values can be set using env variables. The keys are outlined in: `./config/readme.md`
 
@@ -150,7 +151,7 @@ make deploy-uniswap
 
 For use when testing:
 
-```shell
+```bash
 go run . encryptKey --output ./test.keystore --password testonly --privateKey "$PRIVATE_KEY_HASH"
 ```
 
@@ -158,9 +159,23 @@ go run . encryptKey --output ./test.keystore --password testonly --privateKey "$
 
 For testing:
 
-```shell
+```bash
 make compile-scs
 ```
+
+## The Prover
+
+A mock prover is available to use for specific circumstances such as testing.
+
+```bash
+make run-zkprover-mock
+```
+
+The "main" prover source code resides in https://github.com/0xPolygonHermez/zkevm-prover/ and the docker image slug is `hermeznetwork/zkevm-prover`.
+
+Configuration for when the prover is running locally: `./config/prover.config.local.json`
+
+When testing, the prover will switch to this configuration in order to speed things up: `./test/config/prover.config.test.json`
 
 ## Accessing the environment
 
@@ -189,7 +204,7 @@ The Node has 3 different databases.
   - `Database:` rpc_db
   - `Host:` localhost
   - `Port:` 5434
-  - `Url:` <postgres://rpc_user:rpc_password@localhost:5434/state_db>
+  - `Url:` <postgres://rpc_user:rpc_password@localhost:5434/rpc_db>
 - Explorer Database
   - `Type:` Postgres DB
   - `User:` test_user
