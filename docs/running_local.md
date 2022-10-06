@@ -4,7 +4,7 @@
 
 This documentation will help you running the following components:
 
-- zkEVM Node Database
+- zkEVM Node Databases
 - Explorer Database
 - L1 Network
 - Prover
@@ -20,10 +20,16 @@ The current version of the environment requires `go`, `docker` and `docker-compo
 - <https://docs.docker.com/compose/install/>
 
 The `zkevm-node` docker image must be built at least once and every time a change is made to the code.
-If you haven't build the `zkevm-node` image yet, you must run:
+If you haven't built the `zkevm-node` image yet, you must run:
 
 ```bash
 make build-docker
+```
+
+For erasing the previous build cache, use the `-nc` option:
+
+```bash
+make build-docker-nc
 ```
 
 ## Controlling the environment
@@ -47,6 +53,74 @@ To restart the environment:
 ```bash
 make restart
 ```
+
+## Advanced setup
+
+In order to have funds in L2, for development:
+
+```bash
+make run-approve-matic
+```
+
+To spin up the prover:
+
+```
+make run-zkprover
+```
+
+To stop any service:
+
+```
+make stop-{service}
+```
+
+#### What makes up the `Node`?
+
+There are 4 components running in parallel, these can be spun up sans the need of the explorer:
+
+- Synchronizer
+- Sequencer
+- Aggregator
+- JSON RPC
+
+Before anything else, start the required databases: `rpc`, `pool`, `state`:
+
+`make run-db`
+
+Then:
+
+`make run-node`
+
+#### Testing
+
+##### End-to-end:
+
+The catch-all command for testing is:
+
+`make test`, in order of execution this will:
+- compile the smart contract code
+- run the required databases
+- start the prover
+- execute `go test -short`
+
+To check for race conditions, run `make test-full`, note it will compile the docker image from source first.
+
+##### Unit tests:
+
+Each component has its own test file, eg: `sequencer_test.go`.
+
+Run `make test-full-non-e2e` 
+
+#### Configuration
+
+Configuring the node for running locally is pretty painless as the configuration is ready to use out of the box. 
+
+Path for config used when running as Node: [`./config/config.local.toml`](../config/config.local.toml)
+
+Path for config used when running as test: [`./test/config/config.test.toml`](../test/config/config.test.toml)
+
+Additionally values can be set using env variables. The keys are outlined in: `./config/readme.md`
+
 
 ## Sample data
 
@@ -72,16 +146,50 @@ To deploy a full a uniswap environment:
 make deploy-uniswap
 ```
 
+## Generating a new private key
+
+For use when testing:
+
+```shell
+go run . encryptKey --output ./test.keystore --password testonly --privateKey "$PRIVATE_KEY_HASH"
+```
+
+## Compile new smart contracts
+
+For testing:
+
+```shell
+make compile-scs
+```
+
 ## Accessing the environment
 
-- zkEVM Node Database 
+The Node has 3 different databases.
+
+- zkEVM Node State Database 
   - `Type:` Postgres DB
-  - `User:` test_user
-  - `Password:` test_password
-  - `Database:` test_db
+  - `User:` state_user
+  - `Password:` state_password
+  - `Database:` state_db
   - `Host:` localhost
   - `Port:` 5432
-  - `Url:` <postgres://test_user:test_password@localhost:5432/test_db>
+  - `Url:` <postgres://state_user:state_password@localhost:5432/state_db>
+- zkEVM Node Pool Database 
+  - `Type:` Postgres DB
+  - `User:` pool_user
+  - `Password:` pool_password
+  - `Database:` pool_db
+  - `Host:` localhost
+  - `Port:` 5433
+  - `Url:` <postgres://pool_user:pool_password@localhost:5433/pool_db>
+- zkEVM Node RPC Database 
+  - `Type:` Postgres DB
+  - `User:` rpc_user
+  - `Password:` rpc_password
+  - `Database:` rpc_db
+  - `Host:` localhost
+  - `Port:` 5434
+  - `Url:` <postgres://rpc_user:rpc_password@localhost:5434/state_db>
 - Explorer Database
   - `Type:` Postgres DB
   - `User:` test_user
@@ -96,10 +204,13 @@ make deploy-uniswap
   - `Port:` 8545
   - `Url:` <http://localhost:8545>
 - Prover
-  - `Type:` Mock
+  - `Type:` Prover
   - `Host:` localhost
   - `Port:` 50001
-  - `Url:` <http://localhost:50001>
+  - `Url:` 
+      - Prover: <http://localhost:50052> 
+      - Merkle Tree: <http://localhost:50061> 
+      - Executor: <http://localhost:50071>
 - zkEVM Node
   - `Type:` JSON RPC
   - `Host:` localhost
