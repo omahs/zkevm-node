@@ -5,25 +5,25 @@ Level = "debug"
 Outputs = ["stdout"]
 
 [StateDB]
-User = "zkevmdevelopcorestatedb"
-Password = "HMICQJoPCD"
-Name = "zkevmdevelopcorestatedb"
-Host = "localhost"
-Port = "5433"
+User = "state_user"
+Password = "state_password"
+Name = "state_db"
+Host = "zkevm-state-db"
+Port = "5432"
 EnableLog = false
 MaxConns = 200
 
 [PoolDB]
-User = "zkevmdeveloppooldb"
-Password = "sabHFOkox5"
-Name = "zkevmdeveloppooldb"
-Host = "localhost"
+User = "pool_user"
+Password = "pool_password"
+Name = "pool_db"
+Host = "zkevm-pool-db"
 Port = "5432"
 EnableLog = false
 MaxConns = 200
 
 [Etherman]
-URL = "http://localhost:8545"
+URL = "http://zkevm-mock-l1-network:8545"
 PrivateKeyPath = "./test/test.keystore"
 PrivateKeyPassword = "testonly"
 
@@ -41,11 +41,11 @@ SequencerNodeURI = ""
 BroadcastURI = "127.0.0.1:61090"
 DefaultSenderAddress = "0x1111111111111111111111111111111111111111"
 	[RPC.DB]
-		User = "zkevmdeveloprpcdb"
-		Password = "ukn9FJ6ydu"
-		Name = "zkevmdeveloprpcdb"
-		Host = "localhost"
-		Port = "5435"
+		User = "rpc_user"
+		Password = "rpc_password"
+		Name = "rpc_db"
+		Host = "zkevm-rpc-db"
+		Port = "5432"
 		EnableLog = false
 		MaxConns = 10
 
@@ -85,7 +85,7 @@ Type = "default"
 DefaultGasPriceWei = 1000000000
 
 [Provers]
-ProverURIs = ["51.210.116.237:50052"]
+ProverURIs = ["zkevm-prover:50052"]
 
 [MTServer]
 Host = "0.0.0.0"
@@ -93,10 +93,10 @@ Port = 50060
 StoreBackend = "PostgreSQL"
 
 [MTClient]
-URI = "51.210.116.237:50061"
+URI = "zkevm-prover:50061"
 
 [Executor]
-URI = "51.210.116.237:50071"
+URI = "zkevm-prover:50071"
 
 [BroadcastServer]
 Host = "0.0.0.0"

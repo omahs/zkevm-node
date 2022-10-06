@@ -259,8 +259,15 @@ func (s *State) EstimateGas(transaction *types.Transaction, senderAddress common
 
 	txExecutions := []time.Duration{}
 	var totalExecutionTime time.Duration
+	// Try with the highest value
+	_, reverted, err := testTransaction(highEnd, true)
+	if reverted {
+		// TODO: Return same error than Geth
+		return 0, err
+	}
+
 	// Start the binary search for the lowest possible gas price
-	for lowEnd+1 < highEnd {
+	for lowEnd < highEnd && (highEnd-lowEnd) > 1024 {
 		txExecutionStart := time.Now()
 		mid := (lowEnd + highEnd) / uint64(two)
 
@@ -279,7 +286,7 @@ func (s *State) EstimateGas(transaction *types.Transaction, senderAddress common
 
 		if failed {
 			// If the transaction failed => increase the gas
-			lowEnd = mid
+			lowEnd = mid + 1
 		} else {
 			// If the transaction didn't fail => make this ok value the high end
 			highEnd = mid
@@ -289,22 +296,23 @@ func (s *State) EstimateGas(transaction *types.Transaction, senderAddress common
 	log.Debugf("EstimateGas executed the TX %v times", len(txExecutions))
 	averageExecutionTime := totalExecutionTime.Milliseconds() / int64(len(txExecutions))
 	log.Debugf("EstimateGas tx execution average time is %v milliseconds", averageExecutionTime)
+	/*
+		// Check if the highEnd is a good value to make the transaction pass
+		failed, reverted, err := testTransaction(highEnd, false)
+		log.Debugf("Estimate gas. Trying to execute TX with %v gas", highEnd)
+		if failed {
+			if reverted {
+				return 0, err
+			}
 
-	// Check if the highEnd is a good value to make the transaction pass
-	failed, reverted, err := testTransaction(highEnd, false)
-	log.Debugf("Estimate gas. Trying to execute TX with %v gas", highEnd)
-	if failed {
-		if reverted {
-			return 0, err
+			// The transaction shouldn't fail, for whatever reason, at highEnd
+			return 0, fmt.Errorf(
+				"unable to apply transaction even for the highest gas limit %d: %w",
+				highEnd,
+				err,
+			)
 		}
-
-		// The transaction shouldn't fail, for whatever reason, at highEnd
-		return 0, fmt.Errorf(
-			"unable to apply transaction even for the highest gas limit %d: %w",
-			highEnd,
-			err,
-		)
-	}
+	*/
 	return highEnd, nil
 }
 

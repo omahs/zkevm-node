@@ -62,11 +62,7 @@ func start(cliCtx *cli.Context) error {
 			log.Fatal(err)
 		}
 
-		// READ CHAIN ID FROM POE SC
-		chainID, err := etherman.GetL2ChainID()
-		if err != nil {
-			log.Fatal(err)
-		}
+		chainID := uint64(1401)
 
 		c.NetworkConfig.L2ChainID = chainID
 		log.Infof("Chain ID read from POE SC = %v", c.NetworkConfig.L2ChainID)
