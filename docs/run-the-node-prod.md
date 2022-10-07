@@ -17,13 +17,13 @@ Check there is no previous ZKEVM Node instance running:
 
 Then run the Node as RPC:
 
-`make run` will run an RPC Node for ZKEVM that connects to testnet engine from Polygon.
+`make run-rpc` will run an RPC Node for ZKEVM that connects to testnet engine from Polygon.
 
 Essentially this uses the L1/Sequencer/Broadcast from Polygon ZKEVM Testnet while using the Prover/Sync/RPC from your local docker instance.
 
 ### Configuration:
 
-By default the L1 network will be `"https://geth_goerli.hermez.io` but change as you see fit.
+By default the L1 network will be `https://geth_goerli.hermez.io` but change as you see fit.
 
 Broadcast, SequencerNode URIs should point to `internal.zkevm-test.net` with the correct ports.
 
