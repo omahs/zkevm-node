@@ -3,6 +3,7 @@ package jsonrpc
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"reflect"
 	"strings"
 	"sync"
@@ -48,7 +49,7 @@ var connectionCounterMutex sync.Mutex
 
 // Handle is the function that knows which and how a function should
 // be executed when a JSON RPC request is received
-func (d *Handler) Handle(req Request) Response {
+func (d *Handler) Handle(req Request, ip net.IP) Response {
 	connectionCounterMutex.Lock()
 	connectionCounter++
 	connectionCounterMutex.Unlock()

@@ -161,6 +161,18 @@ func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	ip, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		log.Error(err)
+		return
+	}
+
+	userIP := net.ParseIP(ip)
+	if userIP == nil {
+		log.Error(err)
+		return
+	}
+
 	single, err := s.isSingleRequest(data)
 	if err != nil {
 		handleError(w, err)
@@ -168,9 +180,9 @@ func (s *Server) handle(w http.ResponseWriter, req *http.Request) {
 	}
 
 	if single {
-		s.handleSingleRequest(w, data)
+		s.handleSingleRequest(w, data, userIP)
 	} else {
-		s.handleBatchRequest(w, data)
+		s.handleBatchRequest(w, data, userIP)
 	}
 }
 
@@ -184,14 +196,14 @@ func (s *Server) isSingleRequest(data []byte) (bool, rpcError) {
 	return x[0] == '{', nil
 }
 
-func (s *Server) handleSingleRequest(w http.ResponseWriter, data []byte) {
+func (s *Server) handleSingleRequest(w http.ResponseWriter, data []byte, ip net.IP) {
 	request, err := s.parseRequest(data)
 	if err != nil {
 		handleError(w, err)
 		return
 	}
 
-	response := s.handler.Handle(request)
+	response := s.handler.Handle(request, ip)
 
 	respBytes, err := json.Marshal(response)
 	if err != nil {
@@ -206,7 +218,7 @@ func (s *Server) handleSingleRequest(w http.ResponseWriter, data []byte) {
 	}
 }
 
-func (s *Server) handleBatchRequest(w http.ResponseWriter, data []byte) {
+func (s *Server) handleBatchRequest(w http.ResponseWriter, data []byte, ip net.IP) {
 	requests, err := s.parseRequests(data)
 	if err != nil {
 		handleError(w, err)
@@ -216,7 +228,7 @@ func (s *Server) handleBatchRequest(w http.ResponseWriter, data []byte) {
 	responses := make([]Response, 0, len(requests))
 
 	for _, request := range requests {
-		response := s.handler.Handle(request)
+		response := s.handler.Handle(request, ip)
 		responses = append(responses, response)
 	}
 
