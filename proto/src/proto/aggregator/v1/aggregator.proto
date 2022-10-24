@@ -1,0 +1,34 @@
+syntax = "proto3";
+
+package aggregator.v1;
+
+option go_package = "github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb";
+
+message Version {
+    string v0_0_1 = 1;
+}
+
+/**
+ * Define all methods implementes by the gRPC
+ */
+service Aggregator {
+    rpc Register(RegisterRequest) returns (RegisterResponse)
+}
+
+
+///////////////////
+// Request messages
+///////////////////
+
+message RegisterRequest {
+    string prover_id = 1;
+}
+
+
+/////////////////////
+// Responses messages
+/////////////////////
+
+message RegisterResponse {
+    string aggregator_id = 1;
+}
