@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"sync"
+	"time"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
 	"github.com/0xPolygonHermez/zkevm-node/log"
@@ -12,18 +14,30 @@ import (
 )
 
 type Server struct {
-	pb.UnimplementedAggregatorServer
+	pb.UnimplementedAggregatorServiceServer
 
-	cfg *ServerConfig
-	srv *grpc.Server
+	cfg     *ServerConfig
+	srv     *grpc.Server
+	provers sync.Map
+	ctx     context.Context
+	exit    context.CancelFunc
 }
 
 func NewServer(cfg *ServerConfig) *Server {
-	return &Server{cfg: cfg}
+	return &Server{
+		cfg: cfg,
+	}
 }
 
 // Start sets up the server to process requests.
-func (s *Server) Start() {
+func (s *Server) Start(ctx context.Context) {
+	var cancel context.CancelFunc
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	s.ctx = ctx
+	s.exit = cancel
 	address := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
@@ -31,23 +45,75 @@ func (s *Server) Start() {
 	}
 
 	s.srv = grpc.NewServer()
-	pb.RegisterAggregatorServer(s.srv, s)
+	pb.RegisterAggregatorServiceServer(s.srv, s)
 
 	healthService := newHealthChecker()
 	grpc_health_v1.RegisterHealthServer(s.srv, healthService)
 
-	log.Infof("Server listening in %q", address)
-	if err := s.srv.Serve(lis); err != nil {
-		log.Fatalf("failed to serve: %v", err)
-	}
+	go func() {
+		log.Infof("Server listening in %q", address)
+		if err := s.srv.Serve(lis); err != nil {
+			s.exit()
+			log.Fatalf("failed to serve: %v", err)
+		}
+	}()
+	time.Sleep(500 * time.Millisecond)
+
 }
 
 // Stop stops the server.
 func (s *Server) Stop() {
+	s.exit()
 	s.srv.Stop()
 }
 
-// Implementation of pb.AggregatorServer interface methods.
+// Channel implements the bi-directional communication channel between Prover
+// client and Aggregator server.
+func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
+	log.Debug("received Channel call")
+
+	if err := s.getStatus(stream); err != nil {
+		return err
+	}
+
+	for {
+		s.provers.Range(func(key, value interface{}) bool {
+			log.Debugf("asking status for prover %s", key.(string))
+			if err := s.getStatus(value.(pb.AggregatorService_ChannelServer)); err != nil {
+				log.Error(err)
+				return false
+			}
+			time.Sleep(1 * time.Second)
+			return true
+		})
+	}
+}
+
+func (s *Server) getStatus(stream pb.AggregatorService_ChannelServer) error {
+	req := &pb.AggregatorMessage{
+		Request: &pb.AggregatorMessage_GetStatusRequest{
+			GetStatusRequest: &pb.GetStatusRequest{},
+		},
+	}
+	if err := stream.Send(req); err != nil {
+		return err
+	}
+
+	res, err := stream.Recv()
+	if err != nil {
+		return err
+	}
+	if msg, ok := res.Response.(*pb.ProverMessage_GetStatusResponse); ok {
+		id := msg.GetStatusResponse.ProverId
+		if _, ok := s.provers.Load(id); !ok {
+			// first message
+			// store the prover stream for later communication
+			s.provers.Store(id, stream)
+		}
+		log.Debugf("prover id %s status is %s\n", id, msg.GetStatusResponse.Status.String())
+	}
+	return nil
+}
 
 // HealthChecker will provide an implementation of the HealthCheck interface.
 type healthChecker struct{}

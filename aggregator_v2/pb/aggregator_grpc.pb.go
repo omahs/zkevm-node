@@ -14,88 +14,120 @@ import (
 // Requires gRPC-Go v1.32.0 or later.
 const _ = grpc.SupportPackageIsVersion7
 
-// AggregatorClient is the client API for Aggregator service.
+// AggregatorServiceClient is the client API for AggregatorService service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type AggregatorClient interface {
-	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
+type AggregatorServiceClient interface {
+	Channel(ctx context.Context, opts ...grpc.CallOption) (AggregatorService_ChannelClient, error)
 }
 
-type aggregatorClient struct {
+type aggregatorServiceClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewAggregatorClient(cc grpc.ClientConnInterface) AggregatorClient {
-	return &aggregatorClient{cc}
+func NewAggregatorServiceClient(cc grpc.ClientConnInterface) AggregatorServiceClient {
+	return &aggregatorServiceClient{cc}
 }
 
-func (c *aggregatorClient) Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error) {
-	out := new(RegisterResponse)
-	err := c.cc.Invoke(ctx, "/aggregator.v1.Aggregator/Register", in, out, opts...)
+func (c *aggregatorServiceClient) Channel(ctx context.Context, opts ...grpc.CallOption) (AggregatorService_ChannelClient, error) {
+	stream, err := c.cc.NewStream(ctx, &AggregatorService_ServiceDesc.Streams[0], "/aggregator.v1.AggregatorService/Channel", opts...)
 	if err != nil {
 		return nil, err
 	}
-	return out, nil
+	x := &aggregatorServiceChannelClient{stream}
+	return x, nil
 }
 
-// AggregatorServer is the server API for Aggregator service.
-// All implementations must embed UnimplementedAggregatorServer
-// for forward compatibility
-type AggregatorServer interface {
-	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
-	mustEmbedUnimplementedAggregatorServer()
+type AggregatorService_ChannelClient interface {
+	Send(*ProverMessage) error
+	Recv() (*AggregatorMessage, error)
+	grpc.ClientStream
 }
 
-// UnimplementedAggregatorServer must be embedded to have forward compatible implementations.
-type UnimplementedAggregatorServer struct {
+type aggregatorServiceChannelClient struct {
+	grpc.ClientStream
 }
 
-func (UnimplementedAggregatorServer) Register(context.Context, *RegisterRequest) (*RegisterResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Register not implemented")
-}
-func (UnimplementedAggregatorServer) mustEmbedUnimplementedAggregatorServer() {}
-
-// UnsafeAggregatorServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to AggregatorServer will
-// result in compilation errors.
-type UnsafeAggregatorServer interface {
-	mustEmbedUnimplementedAggregatorServer()
+func (x *aggregatorServiceChannelClient) Send(m *ProverMessage) error {
+	return x.ClientStream.SendMsg(m)
 }
 
-func RegisterAggregatorServer(s grpc.ServiceRegistrar, srv AggregatorServer) {
-	s.RegisterService(&Aggregator_ServiceDesc, srv)
-}
-
-func _Aggregator_Register_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(RegisterRequest)
-	if err := dec(in); err != nil {
+func (x *aggregatorServiceChannelClient) Recv() (*AggregatorMessage, error) {
+	m := new(AggregatorMessage)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
 		return nil, err
 	}
-	if interceptor == nil {
-		return srv.(AggregatorServer).Register(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: "/aggregator.v1.Aggregator/Register",
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AggregatorServer).Register(ctx, req.(*RegisterRequest))
-	}
-	return interceptor(ctx, in, info, handler)
+	return m, nil
 }
 
-// Aggregator_ServiceDesc is the grpc.ServiceDesc for Aggregator service.
+// AggregatorServiceServer is the server API for AggregatorService service.
+// All implementations must embed UnimplementedAggregatorServiceServer
+// for forward compatibility
+type AggregatorServiceServer interface {
+	Channel(AggregatorService_ChannelServer) error
+	mustEmbedUnimplementedAggregatorServiceServer()
+}
+
+// UnimplementedAggregatorServiceServer must be embedded to have forward compatible implementations.
+type UnimplementedAggregatorServiceServer struct {
+}
+
+func (UnimplementedAggregatorServiceServer) Channel(AggregatorService_ChannelServer) error {
+	return status.Errorf(codes.Unimplemented, "method Channel not implemented")
+}
+func (UnimplementedAggregatorServiceServer) mustEmbedUnimplementedAggregatorServiceServer() {}
+
+// UnsafeAggregatorServiceServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to AggregatorServiceServer will
+// result in compilation errors.
+type UnsafeAggregatorServiceServer interface {
+	mustEmbedUnimplementedAggregatorServiceServer()
+}
+
+func RegisterAggregatorServiceServer(s grpc.ServiceRegistrar, srv AggregatorServiceServer) {
+	s.RegisterService(&AggregatorService_ServiceDesc, srv)
+}
+
+func _AggregatorService_Channel_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(AggregatorServiceServer).Channel(&aggregatorServiceChannelServer{stream})
+}
+
+type AggregatorService_ChannelServer interface {
+	Send(*AggregatorMessage) error
+	Recv() (*ProverMessage, error)
+	grpc.ServerStream
+}
+
+type aggregatorServiceChannelServer struct {
+	grpc.ServerStream
+}
+
+func (x *aggregatorServiceChannelServer) Send(m *AggregatorMessage) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+func (x *aggregatorServiceChannelServer) Recv() (*ProverMessage, error) {
+	m := new(ProverMessage)
+	if err := x.ServerStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// AggregatorService_ServiceDesc is the grpc.ServiceDesc for AggregatorService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Aggregator_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "aggregator.v1.Aggregator",
-	HandlerType: (*AggregatorServer)(nil),
-	Methods: []grpc.MethodDesc{
+var AggregatorService_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "aggregator.v1.AggregatorService",
+	HandlerType: (*AggregatorServiceServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
 		{
-			MethodName: "Register",
-			Handler:    _Aggregator_Register_Handler,
+			StreamName:    "Channel",
+			Handler:       _AggregatorService_Channel_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
 	Metadata: "aggregator.proto",
 }
