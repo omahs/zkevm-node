@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
@@ -67,30 +66,26 @@ func (s *Server) Stop() {
 	s.srv.Stop()
 }
 
-var counter uint64
-
 // Channel implements the bi-directional communication channel between Prover
 // client and Aggregator server.
 func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
-	count := atomic.LoadUint64(&counter)
-	atomic.AddUint64(&counter, 1)
-	log.Debugf("establishing stream for channel %d", count)
-
-	_, err := s.proverID(stream)
+	proverID, err := s.proverID(stream)
 	if err != nil {
 		return err
 	}
+	log.Debugf("establishing stream connection for prover %s", proverID)
 
 	// keep this scope alive, the stream gets closed if we exit from here.
 	ctx := stream.Context()
 	for {
 		select {
 		case <-s.ctx.Done():
-			// server disconnect
-			// TODO(pg): reconnect?
+			// server disconnecting
 			return nil
 		case <-ctx.Done():
-			// client disconnect
+			// client disconnected, remove stream from known provers
+			s.provers.Delete(proverID)
+
 			// TODO(pg): reconnect?
 			return nil
 		}
@@ -100,17 +95,22 @@ func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 func (s *Server) handle() {
 	for {
 		s.provers.Range(func(key, value interface{}) bool {
-			proverID := key.(string)
-			log.Debugf("asking status for prover %s", proverID)
-			stream := value.(pb.AggregatorService_ChannelServer)
-			msg, err := s.getStatus(stream)
-			if err != nil {
-				log.Error(err)
+			select {
+			case <-s.ctx.Done():
 				return false
+			default:
+				proverID := key.(string)
+				log.Debugf("asking status for prover %s", proverID)
+				stream := value.(pb.AggregatorService_ChannelServer)
+				msg, err := s.getStatus(stream)
+				if err != nil {
+					log.Error(err)
+					return false
+				}
+				log.Debugf("prover id %s status is %s", proverID, msg.Status.String())
+				time.Sleep(1 * time.Second)
+				return true
 			}
-			log.Debugf("prover id %s status is %s", proverID, msg.Status.String())
-			time.Sleep(1 * time.Second)
-			return true
 		})
 	}
 }
