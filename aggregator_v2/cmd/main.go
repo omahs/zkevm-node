@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand"
 	"time"
 
 	aggregatorv2 "github.com/0xPolygonHermez/zkevm-node/aggregator_v2"
@@ -130,7 +131,7 @@ func main() {
 					Response: &pb.ProverMessage_GetStatusResponse{
 						GetStatusResponse: &pb.GetStatusResponse{
 							ProverId: "id2",
-							Status:   pb.GetStatusResponse_IDLE,
+							Status:   pb.GetStatusResponse_Status(rand.Int31n(5)),
 						},
 					},
 				}

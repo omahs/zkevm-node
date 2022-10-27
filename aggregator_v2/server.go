@@ -2,6 +2,7 @@ package aggregatorv2
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -72,47 +73,63 @@ func (s *Server) Stop() {
 func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 	log.Debug("received Channel call")
 
-	if err := s.getStatus(stream); err != nil {
+	proverID, err := s.proverID(stream)
+	if err != nil {
 		return err
 	}
 
 	for {
 		s.provers.Range(func(key, value interface{}) bool {
 			log.Debugf("asking status for prover %s", key.(string))
-			if err := s.getStatus(value.(pb.AggregatorService_ChannelServer)); err != nil {
+			// log.Debugf("asking status for prover %s", proverID)
+			msg, err := s.getStatus(value.(pb.AggregatorService_ChannelServer))
+			// msg, err := s.getStatus(stream)
+			if err != nil {
 				log.Error(err)
+				// return err
 				return false
 			}
-			time.Sleep(1 * time.Second)
+			log.Debugf("prover id %s status is %s", proverID, msg.Status.String())
+			time.Sleep(2 * time.Second)
+			// return nil
 			return true
 		})
 	}
 }
 
-func (s *Server) getStatus(stream pb.AggregatorService_ChannelServer) error {
+func (s *Server) proverID(stream pb.AggregatorService_ChannelServer) (string, error) {
+	var id string
+	msg, err := s.getStatus(stream)
+	if err != nil {
+		return id, err
+	}
+	id = msg.ProverId
+	if _, ok := s.provers.Load(id); !ok {
+		// first message
+		// store the prover stream for later communication
+		s.provers.Store(id, stream)
+	}
+	return id, nil
+}
+
+func (s *Server) getStatus(stream pb.AggregatorService_ChannelServer) (*pb.GetStatusResponse, error) {
 	req := &pb.AggregatorMessage{
 		Request: &pb.AggregatorMessage_GetStatusRequest{
 			GetStatusRequest: &pb.GetStatusRequest{},
 		},
 	}
 	if err := stream.Send(req); err != nil {
-		return err
+		return nil, err
 	}
 
 	res, err := stream.Recv()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if msg, ok := res.Response.(*pb.ProverMessage_GetStatusResponse); ok {
-		id := msg.GetStatusResponse.ProverId
-		if _, ok := s.provers.Load(id); !ok {
-			// first message
-			// store the prover stream for later communication
-			s.provers.Store(id, stream)
-		}
-		log.Debugf("prover id %s status is %s\n", id, msg.GetStatusResponse.Status.String())
+		return msg.GetStatusResponse, nil
 	}
-	return nil
+	return nil, errors.New("bad response") // FIXME(pg)
 }
 
 // HealthChecker will provide an implementation of the HealthCheck interface.
