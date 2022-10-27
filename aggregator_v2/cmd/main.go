@@ -44,7 +44,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	log.Debug("client1: received request from server")
+	log.Debug("[client0] received request from server")
 	if _, ok := req.Request.(*pb.AggregatorMessage_GetStatusRequest); ok {
 		msg := &pb.ProverMessage{
 			Response: &pb.ProverMessage_GetStatusResponse{
@@ -71,7 +71,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	log.Debug("client2: received request from server")
+	log.Debug("[client1] received request from server")
 	if _, ok := req.Request.(*pb.AggregatorMessage_GetStatusRequest); ok {
 		msg := &pb.ProverMessage{
 			Response: &pb.ProverMessage_GetStatusResponse{
@@ -98,13 +98,13 @@ func main() {
 				panic(err)
 			}
 
-			log.Debug("client1: received request from server")
+			log.Debug("[client0] received request from server")
 			if _, ok := req.Request.(*pb.AggregatorMessage_GetStatusRequest); ok {
 				msg := &pb.ProverMessage{
 					Response: &pb.ProverMessage_GetStatusResponse{
 						GetStatusResponse: &pb.GetStatusResponse{
 							ProverId: "id1",
-							Status:   pb.GetStatusResponse_IDLE,
+							Status:   pb.GetStatusResponse_Status(rand.Int31n(5)),
 						},
 					},
 				}
@@ -125,7 +125,7 @@ func main() {
 				panic(err)
 			}
 
-			log.Debug("client2: received request from server")
+			log.Debug("[client1] received request from server")
 			if _, ok := req.Request.(*pb.AggregatorMessage_GetStatusRequest); ok {
 				msg := &pb.ProverMessage{
 					Response: &pb.ProverMessage_GetStatusResponse{

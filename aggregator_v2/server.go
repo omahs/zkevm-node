@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
@@ -51,15 +52,11 @@ func (s *Server) Start(ctx context.Context) {
 	healthService := newHealthChecker()
 	grpc_health_v1.RegisterHealthServer(s.srv, healthService)
 
-	go func() {
-		log.Infof("Server listening in %q", address)
-		if err := s.srv.Serve(lis); err != nil {
-			s.exit()
-			log.Fatalf("failed to serve: %v", err)
-		}
-	}()
-	time.Sleep(500 * time.Millisecond)
-
+	log.Infof("Server listening on port %d", s.cfg.Port)
+	if err := s.srv.Serve(lis); err != nil {
+		s.exit()
+		log.Fatalf("failed to serve: %v", err)
+	}
 }
 
 // Stop stops the server.
@@ -68,10 +65,14 @@ func (s *Server) Stop() {
 	s.srv.Stop()
 }
 
+var counter uint64
+
 // Channel implements the bi-directional communication channel between Prover
 // client and Aggregator server.
 func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
-	log.Debug("received Channel call")
+	count := atomic.LoadUint64(&counter)
+	atomic.AddUint64(&counter, 1)
+	log.Debugf("establishing stream for channel %d", count)
 
 	proverID, err := s.proverID(stream)
 	if err != nil {
@@ -80,7 +81,7 @@ func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 
 	for {
 		s.provers.Range(func(key, value interface{}) bool {
-			log.Debugf("asking status for prover %s", key.(string))
+			log.Debugf("[channel %d] asking status for prover %s", count, key.(string))
 			// log.Debugf("asking status for prover %s", proverID)
 			msg, err := s.getStatus(value.(pb.AggregatorService_ChannelServer))
 			// msg, err := s.getStatus(stream)
@@ -89,8 +90,8 @@ func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 				// return err
 				return false
 			}
-			log.Debugf("prover id %s status is %s", proverID, msg.Status.String())
-			time.Sleep(2 * time.Second)
+			log.Debugf("[channel %d] prover id %s status is %s", count, proverID, msg.Status.String())
+			time.Sleep(1 * time.Second)
 			// return nil
 			return true
 		})
