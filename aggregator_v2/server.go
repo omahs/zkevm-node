@@ -2,7 +2,6 @@ package aggregatorv2
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -69,11 +68,11 @@ func (s *Server) Stop() {
 // Channel implements the bi-directional communication channel between Prover
 // client and Aggregator server.
 func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
-	proverID, err := s.proverID(stream)
+	prover, err := s.registerProver(stream)
 	if err != nil {
 		return err
 	}
-	log.Debugf("establishing stream connection for prover %s", proverID)
+	log.Debugf("establishing stream connection for prover %s", prover.ID)
 
 	// keep this scope alive, the stream gets closed if we exit from here.
 	ctx := stream.Context()
@@ -84,7 +83,7 @@ func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 			return nil
 		case <-ctx.Done():
 			// client disconnected, remove stream from known provers
-			s.provers.Delete(proverID)
+			s.provers.Delete(prover.ID)
 
 			// TODO(pg): reconnect?
 			return nil
@@ -101,8 +100,8 @@ func (s *Server) handle() {
 			default:
 				proverID := key.(string)
 				log.Debugf("asking status for prover %s", proverID)
-				stream := value.(pb.AggregatorService_ChannelServer)
-				msg, err := s.getStatus(stream)
+				prover := value.(*Prover)
+				msg, err := prover.Status()
 				if err != nil {
 					log.Error(err)
 					return false
@@ -115,39 +114,18 @@ func (s *Server) handle() {
 	}
 }
 
-func (s *Server) proverID(stream pb.AggregatorService_ChannelServer) (string, error) {
-	var id string
-	msg, err := s.getStatus(stream)
-	if err != nil {
-		return id, err
-	}
-	id = msg.ProverId
-	if _, ok := s.provers.Load(id); !ok {
-		// first message
-		// store the prover stream for later communication
-		s.provers.Store(id, stream)
-	}
-	return id, nil
-}
-
-func (s *Server) getStatus(stream pb.AggregatorService_ChannelServer) (*pb.GetStatusResponse, error) {
-	req := &pb.AggregatorMessage{
-		Request: &pb.AggregatorMessage_GetStatusRequest{
-			GetStatusRequest: &pb.GetStatusRequest{},
-		},
-	}
-	if err := stream.Send(req); err != nil {
-		return nil, err
-	}
-
-	res, err := stream.Recv()
+func (s *Server) registerProver(stream pb.AggregatorService_ChannelServer) (*Prover, error) {
+	prover, err := NewProver(stream)
 	if err != nil {
 		return nil, err
 	}
-	if msg, ok := res.Response.(*pb.ProverMessage_GetStatusResponse); ok {
-		return msg.GetStatusResponse, nil
-	}
-	return nil, errors.New("bad response") // FIXME(pg)
+	id := prover.ID
+
+	// we assume this method is called only the first time a prover is seen
+	// by the aggregator, therefore we don't check if the prover is already
+	// stored.
+	s.provers.Store(id, prover)
+	return prover, nil
 }
 
 // HealthChecker will provide an implementation of the HealthCheck interface.
