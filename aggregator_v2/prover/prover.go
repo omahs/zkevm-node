@@ -1,28 +1,36 @@
-package aggregatorv2
+package prover
 
 import (
 	"context"
 	"errors"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
+	"github.com/0xPolygonHermez/zkevm-node/log"
 )
 
 // Prover abstraction of the grpc prover client.
 type Prover struct {
-	ID     string
+	id     string
 	stream pb.AggregatorService_ChannelServer
 }
 
 // NewProver returns a new Prover instance.
-func NewProver(stream pb.AggregatorService_ChannelServer) (*Prover, error) {
+func New(stream pb.AggregatorService_ChannelServer) (*Prover, error) {
 	p := &Prover{stream: stream}
 	status, err := p.Status()
 	if err != nil {
 		return nil, err
 	}
-	p.ID = status.ProverId
+	p.id = status.ProverId
 	return p, nil
 }
+
+func (p *Prover) Aggregate(ctx context.Context) error {
+	return nil
+}
+
+// ID returns the Prover ID.
+func (p *Prover) ID() string { return p.id }
 
 // Status gets the prover status.
 func (p *Prover) Status() (*pb.GetStatusResponse, error) {
@@ -41,8 +49,18 @@ func (p *Prover) Status() (*pb.GetStatusResponse, error) {
 	return nil, errors.New("bad response") // FIXME(pg)
 }
 
-// BatchProof instructs the prover to generate a batch proof. It returns the ID
-// of the proof being computed.
+// IsIdle returns true if the prover is idling.
+func (p *Prover) IsIdle() bool {
+	status, err := p.Status()
+	if err != nil {
+		log.Warnf("error asking status for prover ID %s: %w", p.ID, err)
+		return false
+	}
+	return status.Status == pb.GetStatusResponse_IDLE
+}
+
+// BatchProof instructs the prover to generate a batch proof for the provided
+// input. It returns the ID of the proof being computed.
 func (p *Prover) BatchProof(input *pb.InputProver) (*pb.GenBatchProofResponse, error) {
 	req := &pb.AggregatorMessage{
 		Request: &pb.AggregatorMessage_GenBatchProofRequest{
@@ -66,8 +84,8 @@ func (p *Prover) BatchProof(input *pb.InputProver) (*pb.GenBatchProofResponse, e
 	return nil, errors.New("bad response") // FIXME(pg)
 }
 
-// AggregatedProof instructs the prover to generate an aggregated proof. It
-// returns the ID of the proof being computed.
+// AggregatedProof instructs the prover to generate an aggregated proof from
+// the two inputs provided. It returns the ID of the proof being computed.
 func (p *Prover) AggregatedProof(in1, in2 string) (*pb.GenAggregatedProofResponse, error) {
 	req := &pb.AggregatorMessage{
 		Request: &pb.AggregatorMessage_GenAggregatedProofRequest{
@@ -91,8 +109,8 @@ func (p *Prover) AggregatedProof(in1, in2 string) (*pb.GenAggregatedProofRespons
 	return nil, errors.New("bad response") // FIXME(pg)
 }
 
-// FinalProof instructs the prover to generate a final proof. It returns the ID
-// of the proof being computed.
+// FinalProof instructs the prover to generate a final proof for the given
+// input. It returns the ID of the proof being computed.
 func (p *Prover) FinalProof(in string) (*pb.GenFinalProofResponse, error) {
 	req := &pb.AggregatorMessage{
 		Request: &pb.AggregatorMessage_GenFinalProofRequest{
