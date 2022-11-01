@@ -18,23 +18,18 @@ type Server struct {
 
 	cfg  *ServerConfig
 	srv  *grpc.Server
-	ctx  context.Context
-	exit context.CancelFunc
+	exit chan struct{}
 }
 
 func NewServer(cfg *ServerConfig) *Server {
-	return &Server{cfg: cfg}
+	return &Server{
+		cfg:  cfg,
+		exit: make(chan struct{}),
+	}
 }
 
 // Start sets up the server to process requests.
-func (s *Server) Start(ctx context.Context) {
-	var cancel context.CancelFunc
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx, cancel = context.WithCancel(ctx)
-	s.ctx = ctx
-	s.exit = cancel
+func (s *Server) Start() {
 	address := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	lis, err := net.Listen("tcp", address)
 	if err != nil {
@@ -50,7 +45,7 @@ func (s *Server) Start(ctx context.Context) {
 	go func() {
 		log.Infof("Server listening on port %d", s.cfg.Port)
 		if err := s.srv.Serve(lis); err != nil {
-			s.exit()
+			close(s.exit)
 			log.Fatalf("failed to serve: %v", err)
 		}
 	}()
@@ -58,7 +53,7 @@ func (s *Server) Start(ctx context.Context) {
 
 // Stop stops the server.
 func (s *Server) Stop() {
-	s.exit()
+	close(s.exit)
 	s.srv.Stop()
 }
 
@@ -78,7 +73,7 @@ func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 	// keep this scope alive, the stream gets closed if we exit from here.
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-s.exit:
 			// server disconnecting
 			return nil
 		case <-ctx.Done():
@@ -93,7 +88,7 @@ func (s *Server) handle(ctx context.Context, prover proverInterface) {
 	ticker := time.NewTicker(s.cfg.IntervalToConsolidateState.Duration)
 	for {
 		select {
-		case <-s.ctx.Done():
+		case <-s.exit:
 			// server disconnected
 			return
 		case <-ctx.Done():
@@ -103,9 +98,12 @@ func (s *Server) handle(ctx context.Context, prover proverInterface) {
 			if prover.IsIdle() {
 				log.Debugf("prover id %s status is IDLE", prover.ID())
 				// TODO(pg): aggregate or batch prove
-				if err := prover.Aggregate(ctx); err != nil {
+				if err := prover.AggregateProofs(ctx); err != nil {
 					// TODO(pg): inspect error
 					// if error == nothing to aggregate --> batch prove here
+					if err := prover.VerifyBatch(ctx); err != nil {
+						// TODO(pg): just log the error?
+					}
 				}
 
 			} else {
@@ -115,10 +113,10 @@ func (s *Server) handle(ctx context.Context, prover proverInterface) {
 	}
 }
 
-// HealthChecker will provide an implementation of the HealthCheck interface.
+// healthChecker will provide an implementation of the HealthCheck interface.
 type healthChecker struct{}
 
-// NewHealthChecker returns a health checker according to standard package
+// newHealthChecker returns a health checker according to standard package
 // grpc.health.v1.
 func newHealthChecker() *healthChecker {
 	return &healthChecker{}
@@ -142,15 +140,4 @@ func (s *healthChecker) Watch(req *grpc_health_v1.HealthCheckRequest, server grp
 	return server.Send(&grpc_health_v1.HealthCheckResponse{
 		Status: grpc_health_v1.HealthCheckResponse_SERVING,
 	})
-}
-
-func (s *Server) waitTick(ctx context.Context, ticker *time.Ticker) {
-	select {
-	case <-ticker.C:
-		// nothing
-	case <-s.ctx.Done():
-		return
-	case <-ctx.Done():
-		return
-	}
 }

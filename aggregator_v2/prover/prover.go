@@ -25,7 +25,11 @@ func New(stream pb.AggregatorService_ChannelServer) (*Prover, error) {
 	return p, nil
 }
 
-func (p *Prover) Aggregate(ctx context.Context) error {
+func (p *Prover) AggregateProofs(ctx context.Context) error {
+	return nil
+}
+
+func (p *Prover) VerifyBatch(ctx context.Context) error {
 	return nil
 }
 

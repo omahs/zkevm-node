@@ -5,5 +5,6 @@ import "context"
 type proverInterface interface {
 	ID() string
 	IsIdle() bool
-	Aggregate(ctx context.Context) error
+	AggregateProofs(ctx context.Context) error
+	VerifyBatch(ctx context.Context) error
 }

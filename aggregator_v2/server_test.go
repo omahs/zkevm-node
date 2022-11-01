@@ -8,6 +8,7 @@ import (
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/mocks"
 	"github.com/0xPolygonHermez/zkevm-node/config/types"
 	"github.com/0xPolygonHermez/zkevm-node/log"
+	"github.com/stretchr/testify/mock"
 )
 
 func init() {
@@ -40,6 +41,7 @@ func TestHandle(t *testing.T) {
 			setup: func(p *mocks.ProverMock) {
 				p.On("ID").Return("id0")
 				p.On("IsIdle").Return(true)
+				p.On("AggregateProofs", mock.Anything).Return(nil)
 			},
 		},
 		{
@@ -57,7 +59,7 @@ func TestHandle(t *testing.T) {
 			s := newTestServer(defaultTestServerConfig())
 			p := mocks.NewProverMock(t)
 			tc.setup(p)
-			s.Start(ctx)
+			s.Start()
 			defer s.Stop()
 			time.Sleep(time.Millisecond)
 

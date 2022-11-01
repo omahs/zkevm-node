@@ -24,7 +24,7 @@ func main() {
 	ctx := context.Background()
 
 	srv := aggregatorv2.NewServer(&cfg)
-	srv.Start(ctx)
+	srv.Start()
 
 	// connect
 	opts := []grpc.DialOption{
