@@ -6,8 +6,9 @@ import (
 	"math/rand"
 	"time"
 
-	aggregatorv2 "github.com/0xPolygonHermez/zkevm-node/aggregator_v2"
+	aggregator2 "github.com/0xPolygonHermez/zkevm-node/aggregator_v2"
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
+	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/prover"
 	"github.com/0xPolygonHermez/zkevm-node/config/types"
 	"github.com/0xPolygonHermez/zkevm-node/log"
 	"google.golang.org/grpc"
@@ -15,15 +16,17 @@ import (
 )
 
 func main() {
-	cfg := aggregatorv2.ServerConfig{
+	cfg := aggregator2.ServerConfig{
 		Host:                       "0.0.0.0",
 		Port:                       8888,
 		IntervalToConsolidateState: types.NewDuration(time.Second),
-		IntervalFrequencyToGetProofGenerationState: types.NewDuration(5 * time.Second),
+		Prover: prover.Config{
+			IntervalFrequencyToGetProofGenerationState: types.NewDuration(5 * time.Second),
+		},
 	}
 	ctx := context.Background()
 
-	srv := aggregatorv2.NewServer(&cfg)
+	srv := aggregator2.NewServer(&cfg)
 	srv.Start()
 
 	// connect

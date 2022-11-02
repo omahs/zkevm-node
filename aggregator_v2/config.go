@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/prover"
 	"github.com/0xPolygonHermez/zkevm-node/config/types"
 	"github.com/0xPolygonHermez/zkevm-node/encoding"
 )
@@ -30,6 +31,13 @@ func (t *TokenAmountWithDecimals) UnmarshalText(data []byte) error {
 
 // Config represents the configuration of the aggregator
 type Config struct {
+	Prover prover.Config
+
+	// Host for the grpc server
+	Host string `mapstructure:"Host"`
+	// Port for the grpc server
+	Port int `mapstructure:"Port"`
+
 	// IntervalToConsolidateState is the time the aggregator waits until
 	// trying to consolidate a new state
 	IntervalToConsolidateState types.Duration `mapstructure:"IntervalToConsolidateState"`
@@ -58,17 +66,4 @@ type Config struct {
 
 	// Array of Prover URIs read from configuration file
 	ProverURIs []string
-}
-
-// ServerConfig represents the configuration of the aggregator server.
-type ServerConfig struct {
-	Host string `mapstructure:"Host"`
-	Port int    `mapstructure:"Port"`
-
-	// IntervalToConsolidateState is the time the aggregator waits until
-	// trying to consolidate a new state
-	IntervalToConsolidateState types.Duration `mapstructure:"IntervalToConsolidateState"`
-	// IntervalFrequencyToGetProofGenerationState is the time the aggregator waits until
-	// trying to get proof generation status, in case prover client returns PENDING state
-	IntervalFrequencyToGetProofGenerationState types.Duration `mapstructure:"IntervalFrequencyToGetProofGenerationState"`
 }

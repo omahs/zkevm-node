@@ -6,10 +6,13 @@ import (
 	"fmt"
 	"math/big"
 	"math/rand"
+	"net"
 	"sync"
 	"time"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator/prover"
+	pb2 "github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
+	prover2 "github.com/0xPolygonHermez/zkevm-node/aggregator_v2/prover"
 	"github.com/0xPolygonHermez/zkevm-node/encoding"
 	"github.com/0xPolygonHermez/zkevm-node/hex"
 	"github.com/0xPolygonHermez/zkevm-node/log"
@@ -18,10 +21,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/iden3/go-iden3-crypto/keccak256"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/health/grpc_health_v1"
 )
 
 // Aggregator represents an aggregator
 type Aggregator2 struct {
+	pb2.UnimplementedAggregatorServiceServer
+
 	cfg Config
 
 	State                stateInterface
@@ -31,6 +37,10 @@ type Aggregator2 struct {
 	ProfitabilityChecker aggregatorTxProfitabilityChecker
 	TimeSendFinalProof   time.Time
 	StateDBMutex         *sync.Mutex
+
+	srv  *grpc.Server
+	ctx  context.Context
+	exit context.CancelFunc
 }
 
 // NewAggregator creates a new aggregator
@@ -100,6 +110,34 @@ func (a *Aggregator2) resumeWIPProofGeneration(ctx context.Context, proof *state
 
 // Start starts the aggregator
 func (a *Aggregator2) Start(ctx context.Context) {
+	var cancel context.CancelFunc
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel = context.WithCancel(ctx)
+	a.ctx = ctx
+	a.exit = cancel
+
+	address := fmt.Sprintf("%s:%d", a.cfg.Host, a.cfg.Port)
+	lis, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+
+	a.srv = grpc.NewServer()
+	pb2.RegisterAggregatorServiceServer(a.srv, a)
+
+	healthService := newHealthChecker()
+	grpc_health_v1.RegisterHealthServer(a.srv, healthService)
+
+	go func() {
+		log.Infof("Server listening on port %d", a.cfg.Port)
+		if err := a.srv.Serve(lis); err != nil {
+			a.exit()
+			log.Fatalf("failed to serve: %v", err)
+		}
+	}()
+
 	// define those vars here, bcs it can be used in case <-a.ctx.Done()
 	tickerVerifyBatch := time.NewTicker(a.cfg.IntervalToConsolidateState.Duration)
 	tickerSendVerifiedBatch := time.NewTicker(a.cfg.IntervalToSendFinalProof.Duration)
@@ -136,6 +174,67 @@ func (a *Aggregator2) Start(ctx context.Context) {
 	}()
 	// Wait until context is done
 	<-ctx.Done()
+}
+
+// Stop stops the Aggregator server.
+func (a *Aggregator2) Stop() {
+	a.exit()
+	a.srv.Stop()
+}
+
+// Channel implements the bi-directional communication channel between the
+// Prover client and the Aggregator server.
+func (a *Aggregator2) Channel(stream pb2.AggregatorService_ChannelServer) error {
+	prover, err := prover2.New(&a.cfg.Prover, stream)
+	if err != nil {
+		return err
+	}
+	log.Debugf("establishing stream connection for prover %s", prover.ID())
+
+	ctx := stream.Context()
+
+	tickerVerifyBatch := time.NewTicker(a.cfg.IntervalToConsolidateState.Duration)
+	defer tickerVerifyBatch.Stop()
+
+	go func() {
+		for {
+			select {
+			case <-a.ctx.Done():
+				// server disconnected
+				return
+			case <-ctx.Done():
+				// client disconnected
+				return
+			case <-tickerVerifyBatch.C:
+				if prover.IsIdle() {
+					proofGenerated, _ := a.tryAggregateProofs(ctx, prover, tickerVerifyBatch)
+					if !proofGenerated {
+						proofGenerated, _ = a.tryGenerateProofs(ctx, prover, tickerVerifyBatch)
+					}
+					if !proofGenerated {
+						// if no proof was generated (aggregated or batch) wait some time waiting before retry
+						time.Sleep(a.cfg.IntervalToConsolidateState.Duration)
+					} // if proof was generated we retry inmediatly as probably we have more proofs to process
+				} else {
+					log.Warn("Prover ID %s is not idle", prover.ID())
+					time.Sleep(a.cfg.IntervalToConsolidateState.Duration)
+				}
+			}
+		}
+	}()
+
+	// keep this scope alive, the stream gets closed if we exit from here.
+	for {
+		select {
+		case <-a.ctx.Done():
+			// server disconnecting
+			return nil
+		case <-ctx.Done():
+			// client disconnected
+			// TODO(pg): reconnect?
+			return nil
+		}
+	}
 }
 
 /*func (a *Aggregator2) tryToSendVerifiedBatch(ctx context.Context, ticker *time.Ticker) {
@@ -609,4 +708,33 @@ func waitTick(ctx context.Context, ticker *time.Ticker) {
 	case <-ctx.Done():
 		return
 	}
+}
+
+// healthChecker will provide an implementation of the HealthCheck interface.
+type healthChecker struct{}
+
+// newHealthChecker returns a health checker according to standard package
+// grpc.health.v1.
+func newHealthChecker() *healthChecker {
+	return &healthChecker{}
+}
+
+// HealthCheck interface implementation.
+
+// Check returns the current status of the server for unary gRPC health requests,
+// for now if the server is up and able to respond we will always return SERVING.
+func (hc *healthChecker) Check(ctx context.Context, req *grpc_health_v1.HealthCheckRequest) (*grpc_health_v1.HealthCheckResponse, error) {
+	log.Info("Serving the Check request for health check")
+	return &grpc_health_v1.HealthCheckResponse{
+		Status: grpc_health_v1.HealthCheckResponse_SERVING,
+	}, nil
+}
+
+// Watch returns the current status of the server for stream gRPC health requests,
+// for now if the server is up and able to respond we will always return SERVING.
+func (hc *healthChecker) Watch(req *grpc_health_v1.HealthCheckRequest, server grpc_health_v1.Health_WatchServer) error {
+	log.Info("Serving the Watch request for health check")
+	return server.Send(&grpc_health_v1.HealthCheckResponse{
+		Status: grpc_health_v1.HealthCheckResponse_SERVING,
+	})
 }
