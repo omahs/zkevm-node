@@ -191,7 +191,7 @@ func (a *Aggregator2) trySendFinalProof(ctx context.Context, proof *state.Proof2
 		log.Debug("Checking if network is synced")
 		for !a.isSynced(ctx) {
 			log.Info("Waiting for synchronizer to sync...")
-			waitTick(ctx, ticker)
+			waitTick(ctx, ticker) //·sleep
 			continue
 		}
 

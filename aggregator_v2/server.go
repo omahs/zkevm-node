@@ -18,13 +18,15 @@ type Server struct {
 
 	cfg  *ServerConfig
 	srv  *grpc.Server
+	aggr *Aggregator2
 	exit chan struct{}
 }
 
-func NewServer(cfg *ServerConfig) *Server {
+func NewServer(cfg *ServerConfig, aggr *Aggregator2) *Server {
 	return &Server{
 		cfg:  cfg,
 		exit: make(chan struct{}),
+		aggr: aggr,
 	}
 }
 
@@ -85,7 +87,9 @@ func (s *Server) Channel(stream pb.AggregatorService_ChannelServer) error {
 }
 
 func (s *Server) handle(ctx context.Context, prover proverInterface) {
-	ticker := time.NewTicker(s.cfg.IntervalToConsolidateState.Duration)
+	tickerVerifyBatch := time.NewTicker(s.aggr.cfg.IntervalToConsolidateState.Duration)
+	defer tickerVerifyBatch.Stop()
+
 	for {
 		select {
 		case <-s.exit:
@@ -94,20 +98,19 @@ func (s *Server) handle(ctx context.Context, prover proverInterface) {
 		case <-ctx.Done():
 			// client disconnected
 			return
-		case <-ticker.C:
+		case <-tickerVerifyBatch.C:
 			if prover.IsIdle() {
-				log.Debugf("prover id %s status is IDLE", prover.ID())
-				// TODO(pg): aggregate or batch prove
-				if err := prover.AggregateProofs(ctx); err != nil {
-					// TODO(pg): inspect error
-					// if error == nothing to aggregate --> batch prove here
-					if err := prover.VerifyBatch(ctx); err != nil {
-						// TODO(pg): just log the error?
-					}
+				proofGenerated, _ := s.aggr.tryAggregateProofs(ctx, prover, tickerVerifyBatch)
+				if !proofGenerated {
+					proofGenerated, _ = s.aggr.tryGenerateProofs(ctx, prover, tickerVerifyBatch)
 				}
-
+				if !proofGenerated {
+					// if no proof was generated (aggregated or batch) wait some time waiting before retry
+					time.Sleep(a.cfg.IntervalToConsolidateState.Duration)
+				} // if proof was generated we retry inmediatly as probably we have more proofs to process
 			} else {
-				log.Debugf("prover id %s status is not IDLE", prover.ID())
+				log.Warn("Prover %s is not idle", prover.GetURI())
+				time.Sleep(a.cfg.IntervalToConsolidateState.Duration)
 			}
 		}
 	}

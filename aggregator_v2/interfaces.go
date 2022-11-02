@@ -12,6 +12,13 @@ import (
 
 // Consumer interfaces required by the package.
 
+type proverInterface interface {
+	ID() string
+	IsIdle() bool
+	AggregateProofs(ctx context.Context) error
+	VerifyBatch(ctx context.Context) error
+}
+
 // ethTxManager contains the methods required to send txs to
 // ethereum.
 type ethTxManager interface {

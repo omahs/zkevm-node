@@ -60,8 +60,6 @@ type Config struct {
 	ProverURIs []string
 }
 
-import "github.com/0xPolygonHermez/zkevm-node/config/types"
-
 // ServerConfig represents the configuration of the aggregator server.
 type ServerConfig struct {
 	Host string `mapstructure:"Host"`
