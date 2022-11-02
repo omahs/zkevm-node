@@ -3,6 +3,8 @@ package prover
 import (
 	"context"
 	"errors"
+	"fmt"
+	"time"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator_v2/pb"
 	"github.com/0xPolygonHermez/zkevm-node/log"
@@ -11,26 +13,22 @@ import (
 // Prover abstraction of the grpc prover client.
 type Prover struct {
 	id     string
+	cfg    *Config
 	stream pb.AggregatorService_ChannelServer
 }
 
-// NewProver returns a new Prover instance.
-func New(stream pb.AggregatorService_ChannelServer) (*Prover, error) {
-	p := &Prover{stream: stream}
+// New returns a new Prover instance.
+func New(cfg *Config, stream pb.AggregatorService_ChannelServer) (*Prover, error) {
+	p := &Prover{
+		cfg:    cfg,
+		stream: stream,
+	}
 	status, err := p.Status()
 	if err != nil {
 		return nil, err
 	}
 	p.id = status.ProverId
 	return p, nil
-}
-
-func (p *Prover) AggregateProofs(ctx context.Context) error {
-	return nil
-}
-
-func (p *Prover) VerifyBatch(ctx context.Context) error {
-	return nil
 }
 
 // ID returns the Prover ID.
@@ -184,17 +182,21 @@ func (p *Prover) WaitProof(ctx context.Context, proofID string) (*pb.GetProofRes
 				return nil, err
 			}
 			if msg, ok := res.Response.(*pb.ProverMessage_GetProofResponse); ok {
-				// TODO(pg): handle all cases
 				switch msg.GetProofResponse.Result {
 				case pb.GetProofResponse_UNSPECIFIED:
+					// TODO(pg): handle this case?
 				case pb.GetProofResponse_COMPLETED_OK:
 					return msg.GetProofResponse, nil
-				case pb.GetProofResponse_ERROR:
-				case pb.GetProofResponse_COMPLETED_ERROR:
+				case pb.GetProofResponse_ERROR, pb.GetProofResponse_COMPLETED_ERROR:
+					log.Fatalf("failed to get proof with ID %s", proofID)
 				case pb.GetProofResponse_PENDING:
+					time.Sleep(p.cfg.IntervalFrequencyToGetProofGenerationState.Duration)
 					continue
 				case pb.GetProofResponse_INTERNAL_ERROR:
+					return nil, fmt.Errorf("failed to generate proof ID: %s, ResGetProofState: %v", proofID, msg.GetProofResponse)
 				case pb.GetProofResponse_CANCEL:
+					log.Warnf("proof generation was cancelled for proof ID %s", proofID)
+					return msg.GetProofResponse, nil
 				}
 			}
 			return nil, errors.New("bad response") // FIXME(pg)
@@ -202,6 +204,8 @@ func (p *Prover) WaitProof(ctx context.Context, proofID string) (*pb.GetProofRes
 	}
 }
 
+// call sends a message to the prover and waits to receive the response over
+// the connection stream.
 func (p *Prover) call(req *pb.AggregatorMessage) (*pb.ProverMessage, error) {
 	if err := p.stream.Send(req); err != nil {
 		return nil, err
