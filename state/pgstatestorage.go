@@ -99,6 +99,15 @@ func NewPostgresStorage(db *pgxpool.Pool) *PostgresStorage {
 	}
 }
 
+// BeginStateTransaction starts a state transaction
+func (p *PostgresStorage) BeginStateTransaction(ctx context.Context) (pgx.Tx, error) {
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return tx, nil
+}
+
 // getExecQuerier determines which execQuerier to use, dbTx or the main pgxpool
 func (p *PostgresStorage) getExecQuerier(dbTx pgx.Tx) execQuerier {
 	if dbTx != nil {
@@ -562,6 +571,83 @@ func (p *PostgresStorage) GetBatchByNumber(ctx context.Context, batchNumber uint
 		return nil, err
 	}
 	return &batch, nil
+}
+
+// GetVirtualBatchesToProve return the next batch that is not proved, neither in proved process
+func (p *PostgresStorage) GetVirtualBatchToProve(ctx context.Context, lastVerfiedBatchNumber uint64, dbTx pgx.Tx) (*Batch, error) {
+	const query = `
+		SELECT
+			b.batch_num,
+			b.global_exit_root,
+			b.local_exit_root,
+			b.state_root,
+			b.timestamp,
+			b.coinbase,
+			b.raw_txs_data
+		FROM
+			state.batch b,
+			state.virtual_batch v
+		WHERE
+			b.batch_num > $1 AND b.batch_num = v.batch_num AND
+			NOT EXISTS (
+				SELECT p.batch_num FROM state.proof2 p 
+				WHERE v.batch_num >= p.batch_num AND v.batch_num <= p.batch_num_final
+			)
+		ORDER BY b.batch_num ASC LIMIT 1
+		`
+	e := p.getExecQuerier(dbTx)
+	row := e.QueryRow(ctx, query, lastVerfiedBatchNumber)
+	batch, err := scanBatch(row)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	return &batch, nil
+}
+
+// GetProofsToAggregate return the next to proof that it is possible to aggregate
+func (p *PostgresStorage) GetProofsToAggregate(ctx context.Context, dbTx pgx.Tx) (*Proof2, *Proof2, error) {
+	var (
+		proof1 *Proof2 = &Proof2{}
+		proof2 *Proof2 = &Proof2{}
+	)
+
+	const getGeneratedProofSQL = `
+		SELECT 
+			p1.batch_num as p1_batch_num, 
+			p1.batch_num_final as p1_batch_num_final, 
+			p1.proof as p1_proof,	
+			p1.proof_id as p1_proof_id, 
+			p1.input_prover as p1_input_prover, 
+			p1.prover as p1_prover,
+			p2.batch_num as p2_batch_num, 
+			p2.batch_num_final as p2_batch_num_final, 
+			p2.proof as p2_proof,	
+			p2.proof_id as p2_proof_id, 
+			p2.input_prover as p2_input_prover, 
+			p2.prover as p2_prover
+		FROM state.proof2 p1 INNER JOIN state.proof2 p2 ON p1.batch_num_final = p2.batch_num - 1
+		WHERE p1.aggregating = FALSE AND p2.aggregating = FALSE AND 
+		 	  p1.proof IS NOT NULL AND p2.proof IS NOT NULL
+		ORDER BY p1.batch_num ASC
+		LIMIT 1
+		`
+
+	e := p.getExecQuerier(dbTx)
+	row := e.QueryRow(ctx, getGeneratedProofSQL)
+	err := row.Scan(
+		&proof1.BatchNumber, &proof1.BatchNumberFinal, &proof1.Proof, &proof1.ProofID, &proof1.InputProver, &proof1.Prover,
+		&proof2.BatchNumber, &proof2.BatchNumberFinal, &proof2.Proof, &proof2.ProofID, &proof2.InputProver, &proof2.Prover)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil, ErrNotFound
+	} else if err != nil {
+		return nil, nil, err
+	}
+
+	return proof1, proof2, err
 }
 
 // GetBatchByTxHash returns the batch including the given tx
@@ -1772,6 +1858,58 @@ func (p *PostgresStorage) GetWIPProofByProver(ctx context.Context, prover string
 	const getGeneratedProofSQL = "SELECT batch_num, proof, proof_id, input_prover, prover FROM state.proof WHERE prover = $1 and proof is null"
 	e := p.getExecQuerier(dbTx)
 	err = e.QueryRow(ctx, getGeneratedProofSQL, prover).Scan(&proof.BatchNumber, &proof.Proof, &proof.ProofID, &proof.InputProver, &proof.Prover)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+
+	return proof, err
+}
+
+// AddGeneratedProof adds a generated proof to the storage
+func (p *PostgresStorage) AddGeneratedProof2(ctx context.Context, proof *Proof2, dbTx pgx.Tx) error {
+	const addGeneratedProofSQL = "INSERT INTO state.proof2 (batch_num, batch_num_final, proof, proof_id, input_prover, prover, aggregating) VALUES ($1, $2, $3, $4, $5, $6, $7)"
+	e := p.getExecQuerier(dbTx)
+	_, err := e.Exec(ctx, addGeneratedProofSQL, proof.BatchNumber, proof.BatchNumberFinal, proof.Proof, proof.ProofID, proof.InputProver, proof.Prover, proof.Aggregating)
+	return err
+}
+
+// UpdateGeneratedProof updates a generated proof in the storage
+func (p *PostgresStorage) UpdateGeneratedProof2(ctx context.Context, proof *Proof2, dbTx pgx.Tx) error {
+	const addGeneratedProofSQL = "UPDATE state.proof2 SET proof = $3, proof_id = $4, input_prover = $5, prover = $6, aggregating = $7 WHERE batch_num = $1 AND batch_num_final = $2"
+	e := p.getExecQuerier(dbTx)
+	_, err := e.Exec(ctx, addGeneratedProofSQL, proof.BatchNumber, proof.BatchNumberFinal, proof.Proof, proof.ProofID, proof.InputProver, proof.Prover, proof.Aggregating)
+	return err
+}
+
+// DeleteGeneratedProof deletes a generated proof from the storage
+func (p *PostgresStorage) DeleteGeneratedProof2(ctx context.Context, batchNumber uint64, batchNumberFinal uint64, dbTx pgx.Tx) error {
+	const deleteGeneratedProofSQL = "DELETE FROM state.proof2 WHERE batch_num = $1 AND batch_num_final = $2"
+	e := p.getExecQuerier(dbTx)
+	_, err := e.Exec(ctx, deleteGeneratedProofSQL, batchNumber, batchNumberFinal)
+	return err
+}
+
+// DeleteUngeneratedProofs deletes ungenerated proofs from state.proof table
+// This method is meant to be use during aggregator boot-up sequence
+func (p *PostgresStorage) DeleteUngeneratedProofs2(ctx context.Context, dbTx pgx.Tx) error {
+	const deleteUngeneratedProofsSQL = "DELETE FROM state.proof2 WHERE proof is null"
+	e := p.getExecQuerier(dbTx)
+	_, err := e.Exec(ctx, deleteUngeneratedProofsSQL)
+	return err
+}
+
+// GetWIPProofByProver gets a generated proof from its prover URI
+func (p *PostgresStorage) GetWIPProofByProver2(ctx context.Context, prover string, dbTx pgx.Tx) (*Proof2, error) {
+	var (
+		proof *Proof2 = &Proof2{}
+		err   error
+	)
+
+	const getGeneratedProofSQL = "SELECT batch_num, batch_num_final, proof, proof_id, input_prover, prover, aggregating FROM state.proof2 WHERE prover = $1 and proof is null"
+	e := p.getExecQuerier(dbTx)
+	err = e.QueryRow(ctx, getGeneratedProofSQL, prover).Scan(&proof.BatchNumber, &proof.BatchNumberFinal, &proof.Proof, &proof.ProofID, &proof.InputProver, &proof.Prover, &proof.Aggregating)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {

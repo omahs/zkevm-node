@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 
 	"github.com/0xPolygonHermez/zkevm-node/aggregator"
+	aggregator2 "github.com/0xPolygonHermez/zkevm-node/aggregator_v2"
 	"github.com/0xPolygonHermez/zkevm-node/config"
 	"github.com/0xPolygonHermez/zkevm-node/db"
 	"github.com/0xPolygonHermez/zkevm-node/etherman"
@@ -63,6 +64,7 @@ func start(cliCtx *cli.Context) error {
 		log.Fatal(err)
 	}
 	c.Aggregator.ChainID = l2ChainID
+	c.Aggregator2.ChainID = l2ChainID
 	c.RPC.ChainID = l2ChainID
 	log.Infof("Chain ID read from POE SC = %v", l2ChainID)
 
@@ -77,6 +79,10 @@ func start(cliCtx *cli.Context) error {
 			log.Info("Running aggregator")
 			c.Aggregator.ProverURIs = c.Provers.ProverURIs
 			go runAggregator(ctx, c.Aggregator, etherman, ethTxManager, st, grpcClientConns)
+		case AGGREGATOR2:
+			log.Info("Running aggregator2")
+			c.Aggregator2.ProverURIs = c.Provers.ProverURIs
+			go runAggregator2(ctx, c.Aggregator2, etherman, ethTxManager, st, grpcClientConns)
 		case SEQUENCER:
 			log.Info("Running sequencer")
 			poolInstance := createPool(c.PoolDB, c.NetworkConfig.L2BridgeAddr, l2ChainID, st)
@@ -181,6 +187,14 @@ func createSequencer(c config.Config, pool *pool.Pool, state *state.State, ether
 
 func runAggregator(ctx context.Context, c aggregator.Config, ethman *etherman.Client, ethTxManager *ethtxmanager.Client, state *state.State, grpcClientConns []*grpc.ClientConn) {
 	agg, err := aggregator.NewAggregator(c, state, ethTxManager, ethman, grpcClientConns)
+	if err != nil {
+		log.Fatal(err)
+	}
+	agg.Start(ctx)
+}
+
+func runAggregator2(ctx context.Context, c aggregator2.Config, ethman *etherman.Client, ethTxManager *ethtxmanager.Client, state *state.State, grpcClientConns []*grpc.ClientConn) {
+	agg, err := aggregator2.NewAggregator2(c, state, ethTxManager, ethman, grpcClientConns)
 	if err != nil {
 		log.Fatal(err)
 	}

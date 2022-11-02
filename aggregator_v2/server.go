@@ -1,4 +1,4 @@
-package aggregatorv2
+package aggregator2
 
 import (
 	"context"
